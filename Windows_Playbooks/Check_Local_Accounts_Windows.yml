@@ -1,0 +1,57 @@
+---
+- name: Create Local Account Status report file
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    report_file: "/tmp/local_accounts_report_{{ ansible_date_time.iso8601_basic_short }}.txt"
+
+  tasks:
+    - name: Create report with header
+      ansible.builtin.copy:
+        dest: "{{ report_file }}"
+        mode: "0644"
+        content: "Local Account Status Report - {{ ansible_date_time.date }} {{ ansible_date_time.time }}\n\n"
+
+    - name: Save report path for other hosts
+      ansible.builtin.set_fact:
+        global_report_file: "{{ report_file }}"
+
+- name: Collect local account status
+  hosts: windows
+  gather_facts: false
+
+  tasks:
+
+    - name: Get local user accounts
+      ansible.windows.win_powershell:
+        script: |
+          $users = Get-LocalUser | Select-Object Name, Enabled
+          $users | ConvertTo-Json -Depth 3
+      register: local_users_raw
+
+    - name: Convert JSON output
+      ansible.builtin.set_fact:
+        local_users: "{{ local_users_raw.output | join('') | from_json }}"
+
+    - name: Ensure list format
+      ansible.builtin.set_fact:
+        local_users: "{{ [local_users] if local_users is mapping else local_users }}"
+
+- name: Aggregate Local Account results into one file
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+
+    - name: Write all results to report file
+      ansible.builtin.blockinfile:
+        path: "{{ global_report_file }}"
+        block: |
+          {% for host in groups['windows'] %}
+          {% if 'local_users' in hostvars[host] %}
+          {% for user in hostvars[host].local_users %}
+          Host={{ host }} User={{ user.Name }} Status={{ 'Enabled' if user.Enabled else 'Disabled' }}
+          {% endfor %}
+          {% endif %}
+          {% endfor %}

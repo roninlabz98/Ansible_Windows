@@ -1,0 +1,29 @@
+---
+- name: Aggregate Windows Netstat Results
+  hosts: windows
+  gather_facts: yes
+  tasks:
+    - name: Run netstat on Windows managed nodes
+      ansible.windows.win_shell: netstat -ano
+      register: netstat_output
+      # Ensure we don't fail the whole play if one node is down
+      ignore_unreachable: yes 
+      ignore_errors: yes
+
+    - name: Create aggregated report on control node
+      ansible.builtin.copy: # Using copy with content is often cleaner for direct strings
+        dest: /tmp/aggregated_netstat.txt
+        content: |
+          {% for host in groups['windows'] %}
+          =========================================
+          HOST: {{ host }}
+          =========================================
+          {% if hostvars[host]['netstat_output'] is defined and 'stdout' in hostvars[host]['netstat_output'] %}
+          {{ hostvars[host]['netstat_output']['stdout'] }}
+          {% else %}
+          ERROR: No output captured for this host.
+          {% endif %}
+
+          {% endfor %}
+      delegate_to: localhost
+      run_once: true

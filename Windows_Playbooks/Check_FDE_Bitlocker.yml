@@ -1,0 +1,39 @@
+---
+- name: Create BitLocker report file
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    report_file: "/tmp/bitlocker_report_{{ ansible_date_time.iso8601_basic_short }}.txt"
+
+  tasks:
+    - name: Create report with header
+      ansible.builtin.copy:
+        dest: "{{ report_file }}"
+        content: "BitLocker Status Report - {{ ansible_date_time.date }} {{ ansible_date_time.time }}\n\n"
+
+    - name: Save report path for other hosts
+      ansible.builtin.set_fact:
+        global_report_file: "{{ report_file }}"
+
+- name: Collect BitLocker status
+  hosts: windows
+  gather_facts: false
+
+  tasks:
+
+    - name: Get BitLocker volume info
+      ansible.windows.win_powershell:
+        script: |
+          $vols = Get-BitLockerVolume |
+          Select-Object MountPoint, ProtectionStatus
+          $vols | ConvertTo-Json -Depth 3
+      register: bitlocker_raw
+
+    - name: Convert JSON output
+      ansible.builtin.set_fact:
+        bitlocker_volumes: "{{ bitlocker_raw.output | join('') | from_json }}"
+
+    - name: Ensure list format
+      ansible.builtin.set_fact:
+        bitlocker_volumes

@@ -1,0 +1,60 @@
+---
+- name: Collect system time from all Windows hosts
+  hosts: windows
+  gather_facts: no
+  vars:
+    reference_host: "<IP or hostname>"   # <-- Set this to your reference host's inventory name or IP
+    output_file: "/tmp/windows_time_report.txt"
+
+  tasks:
+
+    - name: Get local system time on each host
+      win_shell: "(Get-Date).ToString('o')"
+      register: local_time_raw
+
+    - name: Save local time fact
+      set_fact:
+        local_time: "{{ local_time_raw.stdout }}"
+
+    - name: Fetch reference host time
+      win_shell: "(Get-Date).ToString('o')"
+      register: ref_time_raw
+      delegate_to: "{{ reference_host }}"
+      run_once: true
+
+    - name: Set reference time fact
+      set_fact:
+        reference_time: "{{ ref_time_raw.stdout }}"
+      run_once: true
+
+    - name: Normalize timestamps (trim CRLF and reduce microseconds to 6 digits)
+      set_fact:
+        local_time_clean: "{{ local_time | trim | regex_replace('(\\.\\d{6})\\d+', '\\1') }}"
+        reference_time_clean: "{{ reference_time | trim | regex_replace('(\\.\\d{6})\\d+', '\\1') }}"
+
+    - name: Compute time differential (seconds)
+      set_fact:
+        time_diff_seconds: >-
+          {{
+            (
+              local_time_clean | to_datetime('%Y-%m-%dT%H:%M:%S.%f%z')
+              -
+              reference_time_clean | to_datetime('%Y-%m-%dT%H:%M:%S.%f%z')
+            ).total_seconds()
+          }}
+
+    - name: Build host report line
+      set_fact:
+        report_line: |
+          Host: {{ inventory_hostname }}
+          Local Time: {{ local_time_clean }}
+          Reference Time: {{ reference_time_clean }}
+          Time Differential (seconds): {{ time_diff_seconds }}
+          ------------------------------------------------------------
+
+    - name: Aggregate results on control node
+      delegate_to: localhost
+      lineinfile:
+        path: "{{ output_file }}"
+        line: "{{ report_line }}"
+        create: yes
